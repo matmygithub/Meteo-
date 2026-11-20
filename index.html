@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Météo">
+<meta name="theme-color" content="#2b6cb0">
+<title>Météo</title>
+<style>
+  :root { box-sizing: border-box; }
+  * { box-sizing: inherit; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif;
+    color: #fff;
+    background: linear-gradient(180deg, #2b6cb0 0%, #4fb3d9 100%) fixed;
+    padding: env(safe-area-inset-top, 0px) 16px calc(env(safe-area-inset-bottom, 0px) + 24px);
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 480px; margin: 0 auto; padding-top: 28px; }
+  .center { text-align: center; }
+  .city { font-size: 1.4rem; font-weight: 500; margin: 0; }
+  .icon { font-size: 5.5rem; line-height: 1.2; margin: 8px 0 0; }
+  .temp { font-size: 4.5rem; font-weight: 200; margin: 0; }
+  .desc { font-size: 1.2rem; margin: 4px 0 0; }
+  .card {
+    background: rgba(255,255,255,0.18);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    border-radius: 16px; padding: 16px; margin-top: 24px;
+  }
+  .details { display: flex; justify-content: space-around; text-align: center; }
+  .details div { flex: 1; }
+  .details b { display: block; font-size: 1.15rem; margin-top: 2px; }
+  .details small { opacity: .8; }
+  h2 { font-size: 1rem; margin: 0 0 12px; }
+  .day { display: flex; align-items: center; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.2); }
+  .day:first-of-type { border-top: 0; }
+  .day .name { width: 110px; }
+  .day .ico { width: 40px; font-size: 1.4rem; text-align: center; }
+  .day .range { margin-left: auto; }
+  .day .min { opacity: .7; margin-right: 10px; }
+  button {
+    font: inherit; color: #2b6cb0; background: #fff; border: 0;
+    border-radius: 12px; padding: 12px 20px; margin-top: 16px; font-weight: 600;
+  }
+  .refresh { display: block; margin: 24px auto 0; background: rgba(255,255,255,.25); color: #fff; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <div id="status" class="center card">Recherche de ta position…</div>
+
+  <div id="weather" class="hidden">
+    <div class="center">
+      <p class="city" id="city"></p>
+      <p class="icon" id="icon"></p>
+      <p class="temp" id="temp"></p>
+      <p class="desc" id="desc"></p>
+    </div>
+
+    <div class="card details">
+      <div><small>Ressenti</small><b id="feels"></b></div>
+      <div><small>Humidité</small><b id="humidity"></b></div>
+      <div><small>Vent</small><b id="wind"></b></div>
+    </div>
+
+    <div class="card">
+      <h2>Prévisions 7 jours</h2>
+      <div id="forecast"></div>
+    </div>
+
+    <button class="refresh" id="refresh">Actualiser</button>
+  </div>
+</main>
+
+<script>
+const WEATHER = {
+  0:  ["Ciel dégagé", "☀️"], 1: ["Plutôt dégagé", "🌤️"], 2: ["Peu nuageux", "⛅"],
+  3:  ["Couvert", "☁️"], 45: ["Brouillard", "🌫️"], 48: ["Brouillard givrant", "🌫️"],
+  51: ["Bruine légère", "🌦️"], 53: ["Bruine", "🌦️"], 55: ["Bruine forte", "🌦️"],
+  56: ["Bruine verglaçante", "🌧️"], 57: ["Bruine verglaçante", "🌧️"],
+  61: ["Pluie faible", "🌧️"], 63: ["Pluie", "🌧️"], 65: ["Pluie forte", "🌧️"],
+  66: ["Pluie verglaçante", "🌧️"], 67: ["Pluie verglaçante", "🌧️"],
+  71: ["Neige faible", "🌨️"], 73: ["Neige", "🌨️"], 75: ["Neige forte", "❄️"], 77: ["Grains de neige", "❄️"],
+  80: ["Averses", "🌦️"], 81: ["Averses", "🌧️"], 82: ["Fortes averses", "⛈️"],
+  85: ["Averses de neige", "🌨️"], 86: ["Fortes averses de neige", "❄️"],
+  95: ["Orage", "⛈️"], 96: ["Orage et grêle", "⛈️"], 99: ["Orage violent et grêle", "⛈️"]
+};
+const info = c => WEATHER[c] || ["Inconnu", "❓"];
+const $ = id => document.getElementById(id);
+const deg = n => Math.round(n) + "°";
+
+function showError(msg) {
+  const s = $("status");
+  s.classList.remove("hidden");
+  $("weather").classList.add("hidden");
+  s.innerHTML = msg + '<br><button id="retry">Réessayer</button>';
+  $("retry").onclick = start;
+}
+
+function dayName(iso, i) {
+  if (i === 0) return "Aujourd’hui";
+  const d = new Date(iso + "T12:00:00");
+  const n = d.toLocaleDateString("fr-FR", { weekday: "long" });
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+async function cityName(lat, lon) {
+  try {
+    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=fr`);
+    const j = await r.json();
+    return j.city || j.locality || "Ma position";
+  } catch { return "Ma position"; }
+}
+
+async function load(lat, lon) {
+  const url = "https://api.open-meteo.com/v1/forecast"
+    + `?latitude=${lat}&longitude=${lon}`
+    + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code"
+    + "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+    + "&timezone=auto";
+  const [res, city] = await Promise.all([fetch(url), cityName(lat, lon)]);
+  if (!res.ok) throw new Error("API");
+  const w = await res.json();
+  const [desc, icon] = info(w.current.weather_code);
+
+  $("city").textContent = city;
+  $("icon").textContent = icon;
+  $("temp").textContent = deg(w.current.temperature_2m);
+  $("desc").textContent = desc;
+  $("feels").textContent = deg(w.current.apparent_temperature);
+  $("humidity").textContent = w.current.relative_humidity_2m + "%";
+  $("wind").textContent = Math.round(w.current.wind_speed_10m) + " km/h";
+
+  $("forecast").innerHTML = w.daily.time.map((t, i) => `
+    <div class="day">
+      <span class="name">${dayName(t, i)}</span>
+      <span class="ico">${info(w.daily.weather_code[i])[1]}</span>
+      <span class="range">
+        <span class="min">${deg(w.daily.temperature_2m_min[i])}</span>
+        <b>${deg(w.daily.temperature_2m_max[i])}</b>
+      </span>
+    </div>`).join("");
+
+  $("status").classList.add("hidden");
+  $("weather").classList.remove("hidden");
+}
+
+function start() {
+  $("status").classList.remove("hidden");
+  $("weather").classList.add("hidden");
+  $("status").textContent = "Recherche de ta position…";
+
+  if (!navigator.geolocation) {
+    return showError("La localisation n’est pas disponible sur cet appareil.");
+  }
+  navigator.geolocation.getCurrentPosition(
+    async pos => {
+      try { await load(pos.coords.latitude, pos.coords.longitude); }
+      catch { showError("Impossible de récupérer la météo. Vérifie ta connexion."); }
+    },
+    err => {
+      showError(err.code === 1
+        ? "Localisation refusée. Autorise-la dans Réglages > Confidentialité > Service de localisation > Safari (ou ce site)."
+        : "Position introuvable. Réessaie.");
+    },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 }
+  );
+}
+
+$("refresh").onclick = start;
+document.addEventListener("visibilitychange", () => { if (!document.hidden) start(); });
+start();
+</script>
+</body>
+</html>
